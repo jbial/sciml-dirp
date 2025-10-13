@@ -9,20 +9,22 @@ from jaxtyping import Float
 from sciml.psuedospectral import PsuedoSpectralSolver1D
 
 
-class KuramotoShivashinskySolver(PsuedoSpectralSolver1D):
+class KortewegDeVriesSolver(PsuedoSpectralSolver1D):
     def __call__(self, t: float, uk: Float[Array, " dim"], args: Any | None = None) -> Float[Array, " dim"]:
         n_half = self.dimension // 2
         coeffs = uk[:n_half] + 1j * uk[n_half:]
 
-        # Linear term: -u_xx - u_xxxx
-        linear_term = -(self.ks**4 - self.ks**2) * coeffs
+        # Linear term: -u_xxx
+        linear_term = 1j * self.ks**3 * coeffs
 
-        # Nonlinear term: d/dx (0.5 * u**2)
-        u = jnp.fft.irfft(coeffs)
-        nonlinear_term = 1j * self.ks * jnp.fft.rfft(0.5 * u**2)
+        # Nonlinear term: 3*(u^2)_x
+        u = jnp.fft.irfft(coeffs, n=self.N)
+        nonlinear_term = -3j * self.ks * jnp.fft.rfft(u**2, n=self.N)
+        mask = self.ks < 2 / 3 * jnp.max(self.ks)
+        nonlinear_term = nonlinear_term * mask
 
         flow = linear_term + nonlinear_term
-        return jnp.concatenate([flow.real, flow.imag])
+        return jnp.concatenate([jnp.real(flow), jnp.imag(flow)])
 
 
 if __name__ == "__main__":
@@ -33,20 +35,14 @@ if __name__ == "__main__":
 
     mpl.rcParams["animation.ffmpeg_path"] = imageio_ffmpeg.get_ffmpeg_exe()
 
-    solver = KuramotoShivashinskySolver(N=256, bounds=(0, 100))
+    solver = KortewegDeVriesSolver(N=256, bounds=(0, 50))
 
-    # make random fourier series as initial condition
-    num_sines = 5
-    rng = jax.random.key(0)
-    amp_rng, freq_rng = jax.random.split(rng, 2)
-    amplitudes = jax.random.normal(amp_rng, shape=num_sines)
-    frequencies = jax.random.uniform(freq_rng, shape=num_sines, minval=0, maxval=2)
-    ic = amplitudes @ jnp.sin(frequencies[:, jnp.newaxis] * solver.domain[jnp.newaxis, :])
-    ic *= jnp.exp(solver.domain / solver.L)
-
+    twosigma = 5
+    ic = -jnp.exp(-((solver.domain - 0.5 * sum(solver.bounds)) ** 2) / twosigma) + 0.5
     ic_k = solver.to_fourier(ic)
+
     tspan = (0, 100)
-    ts, uks = solver.integrate(ic_k, tspan=tspan, num_save_pts=400, rtol=1e-5, atol=1e-7)
+    ts, uks = solver.integrate(ic_k, tspan=tspan, num_save_pts=300)
 
     us = solver.to_spatial(uks)
 
@@ -55,9 +51,9 @@ if __name__ == "__main__":
     plt.imshow(us.T, aspect="auto", origin="lower", extent=extent, cmap="magma")
     plt.xlabel("t")
     plt.ylabel("x")
-    plt.title("KS equation")
+    plt.title("KdV equation")
     plt.colorbar(label="u")
-    plt.savefig("figures/ks_1d.png")
+    plt.savefig("figures/kdv.png")
     plt.close()
 
     from celluloid import Camera
@@ -73,5 +69,5 @@ if __name__ == "__main__":
         camera.snap()
 
     animation = camera.animate(interval=50)
-    animation.save("figures/ks_1d.mp4")
+    animation.save("figures/kdv.mp4")
     plt.close(fig)

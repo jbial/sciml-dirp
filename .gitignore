@@ -1,10 +1,28 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+*
+!*/
 
-# Virtual environments
-.venv
+# Whitelist specific directories
+!.github/workflows/**
+!sciml/**
+!notebooks/**
+!scripts/**
+
+# Whitelist specific files
+!.gitattributes
+!.gitignore
+!CONTRIBUTING.md
+!LICENSE.md
+!README.md
+!demos.ipynb
+!pyproject.toml
+
+# Re-ignore common patterns within allowed directories
+__pycache__/
+.ipynb_checkpoints/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.egg-info/
+.DS_Store
+Thumbs.db
+Desktop.ini
