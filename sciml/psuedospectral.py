@@ -214,3 +214,83 @@ class PsuedoSpectralSolverND:
             progress_meter=progress_bar,
         )
         return jnp.asarray(sol.ts), jnp.asarray(sol.ys)
+
+
+@dataclass
+class BurgersSolver(PsuedoSpectralSolver1D):
+    nu: float = 0.1
+
+    def __call__(self, t: float, uk: Float[Array, " dim"], args: Any | None = None) -> Float[Array, " dim"]:
+        n_half = self.dimension // 2
+        coeffs = uk[:n_half] + 1j * uk[n_half:]
+
+        # Diffusion term: -ν * k² * uk (in Fourier space)
+        diffusion_term = -self.nu * self.ks**2 * coeffs
+
+        # Nonlinear term: -u * u_x (computed in spatial domain, then FFT)
+        # Use 3/2 zero-padding de-aliasing for the quadratic product
+        M = (3 * self.N) // 2
+        padded = jnp.zeros(M // 2 + 1, dtype=coeffs.dtype)
+        padded = padded.at[: self.N // 2 + 1].set(coeffs)
+
+        ks_M = 2 * pi * jnp.fft.rfftfreq(M, self.L / M)
+        u_M = jnp.fft.irfft(padded, n=M)
+        ux_M = jnp.fft.irfft(1j * ks_M * padded, n=M)
+
+        nonlinear_spatial_M = -u_M * ux_M
+        nonlinear_M = jnp.fft.rfft(nonlinear_spatial_M, n=M)
+        nonlinear_coeffs = nonlinear_M[: self.N // 2 + 1]
+
+        flow = diffusion_term + nonlinear_coeffs
+        return jnp.concatenate([jnp.real(flow), jnp.imag(flow)])
+
+
+class KuramotoShivashinskySolver(PsuedoSpectralSolver1D):
+    def __call__(self, t: float, uk: Float[Array, " dim"], args: Any | None = None) -> Float[Array, " dim"]:
+        n_half = self.dimension // 2
+        coeffs = uk[:n_half] + 1j * uk[n_half:]
+
+        # Linear term: -u_xx - u_xxxx
+        linear_term = -(self.ks**4 - self.ks**2) * coeffs
+
+        # Nonlinear term: d/dx (0.5 * u**2)
+        u = jnp.fft.irfft(coeffs, n=self.N)
+        nonlinear_term = -1j * self.ks * jnp.fft.rfft(0.5 * u**2, n=self.N)
+
+        flow = linear_term + nonlinear_term
+        return jnp.concatenate([jnp.real(flow), jnp.imag(flow)])
+
+
+class KortewegDeVriesSolver(PsuedoSpectralSolver1D):
+    def __call__(self, t: float, uk: Float[Array, " dim"], args: Any | None = None) -> Float[Array, " dim"]:
+        n_half = self.dimension // 2
+        coeffs = uk[:n_half] + 1j * uk[n_half:]
+
+        # Linear term: -u_xxx
+        linear_term = 1j * self.ks**3 * coeffs
+
+        # Nonlinear term: 3*(u^2)_x
+        u = jnp.fft.irfft(coeffs, n=self.N)
+        nonlinear_term = 3j * self.ks * jnp.fft.rfft(u**2, n=self.N)
+
+        flow = linear_term + nonlinear_term
+        return jnp.concatenate([jnp.real(flow), jnp.imag(flow)])
+
+
+class KuramotoShivashinsky2DSolver(PsuedoSpectralSolverND):
+    def __call__(self, t: float, uk: Float[Array, "D dim"], args: Any | None = None) -> Float[Array, "D dim"]:
+        n_half = self.N[-1] // 2 + 1
+        coeffs = uk[..., :n_half] + 1j * uk[..., n_half:]
+
+        # linear (stiff) term: -∇⁴u + ∇²u
+        nabla_2 = (self.ks**2).sum(axis=0)
+        linear_term = -(nabla_2**2 - nabla_2) * coeffs
+
+        # nonlinear term: -0.5*|∇u|²
+        du_k = 1j * self.ks * coeffs[jnp.newaxis, :]
+        du = jnp.fft.irfftn(du_k, s=self.N, axes=(1, 2))
+        du_2 = 0.5 * (du**2).sum(axis=0)
+        nonlinear_term = -jnp.fft.rfftn(du_2, s=self.N)
+
+        flow = linear_term + nonlinear_term
+        return jnp.concatenate([flow.real, flow.imag], axis=-1)

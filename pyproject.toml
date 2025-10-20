@@ -18,8 +18,10 @@ dependencies = [
     "diffrax",
     "optax",
     "numpy",
+    "einops",
     "tqdm",
     "jaxtyping",
+    "ipywidgets",
     "ipykernel",
     # plotting
     "matplotlib",
