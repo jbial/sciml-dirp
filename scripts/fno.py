@@ -161,21 +161,21 @@ if __name__ == "__main__":
         viscosity: float = 1e-3
 
         # data generation config
-        num_train_ics: int = 32
+        num_train_ics: int = 128
         num_timepoints: int = 1024
         tspan: tuple[float, float] = (0.0, 100.0)
         num_chunks: int = 8
 
         # model config
-        history_size: int = 2
-        in_channels: int = 2
+        history_size: int = 4
+        in_channels: int = 4
         out_channels: int = 1
         width: int = 64
         depth: int = 4
-        n_modes: int = 32
+        n_modes: int = 64
 
         # train config
-        iterations: int = 100
+        iterations: int = 1000
         batch_size: int = 32
         warmup_pct: float = 0.1
         log_interval: int = 50
@@ -238,12 +238,14 @@ if __name__ == "__main__":
         _, trajectories = integrate_ics(
             ics, num_timepoints=cfg.num_timepoints, tspan=cfg.tspan, num_chunks=cfg.num_chunks
         )
+        train_trajectories = trajectories[: cfg.num_train_ics]
+        eval_trajectories = trajectories[cfg.num_train_ics :]
         _, ood_trajectories = integrate_ics(ood_ics, num_timepoints=cfg.num_timepoints, tspan=cfg.tspan, num_chunks=1)
         os.makedirs(os.path.dirname(data_path), exist_ok=True)
         jnp.savez(
             data_path,
-            train_trajectories=trajectories[: cfg.num_train_ics],
-            eval_trajectories=trajectories[cfg.num_train_ics :],
+            train_trajectories=train_trajectories,
+            eval_trajectories=eval_trajectories,
             ood_trajectories=ood_trajectories,
         )
     train_trajectories = rearrange(train_trajectories, "num_ics T N -> num_ics N T")
@@ -316,9 +318,11 @@ if __name__ == "__main__":
     nrmse_curves = []
     eval_preds = []
     eval_ts = []
-    preds = jax.vmap(rollout, in_axes=(None, 0, None))(fno, eval_trajectories[..., :2], cfg.rollout_steps)
+    preds = jax.vmap(rollout, in_axes=(None, 0, None))(
+        fno, eval_trajectories[..., : cfg.history_size], cfg.rollout_steps
+    )
 
-    y_true = rearrange(eval_trajectories[..., : 2 + cfg.rollout_steps], "E N R -> E R N")
+    y_true = rearrange(eval_trajectories[..., : cfg.history_size + cfg.rollout_steps], "E N R -> E R N")
     y_pred = rearrange(preds, "E N R -> E R N")
     errors = jax.vmap(jax.vmap(nrmse))(y_true, y_pred).cumsum(axis=-1)
 
@@ -326,7 +330,7 @@ if __name__ == "__main__":
     std_cumerror = errors.std(axis=0)
 
     plt.figure(figsize=(10, 4))
-    steps = jnp.arange(2 + cfg.rollout_steps)
+    steps = jnp.arange(cfg.history_size + cfg.rollout_steps)
     plt.plot(steps, mean_cumerror)
     plt.fill_between(steps, mean_cumerror - std_cumerror, mean_cumerror + std_cumerror, alpha=0.2)
     plt.xlabel("rollout step")
