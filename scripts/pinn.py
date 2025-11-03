@@ -56,7 +56,7 @@ class SpatiotemporalPINN(eqx.Module):
         d_model: int,
         key: Key,
         activation_fn: ActivationFunction = swish,
-        num_fourier_feats: int = 32,
+        num_fourier_feats: int = 128,
         feature_scale: float = 1.0,
     ) -> "SpatiotemporalPINN":
         """A simple PINN with random Fourier features.
@@ -139,7 +139,7 @@ if __name__ == "__main__":
     loader = dataloader(ts[: num_timepoints // 2], xs, batch_size)
 
     # define model
-    pinn = SpatiotemporalPINN(1, 4, 128, model_key)
+    pinn = SpatiotemporalPINN(1, 2, 256, model_key)
 
     # define loss function for Burgers: u_t + u * u_x - \nu * u_xx = 0
     @eqx.filter_value_and_grad(has_aux=True)
@@ -171,12 +171,12 @@ if __name__ == "__main__":
         ic_error = init_u - init_u_pred
         ic_loss = (ic_error * ic_error).mean()
 
-        total_loss = ic_loss + boundary_loss + pde_loss
+        total_loss = 10 * ic_loss + boundary_loss + pde_loss
         aux = {"ic_loss": ic_loss, "boundary_loss": boundary_loss, "pde_loss": pde_loss}
         return total_loss, aux
 
     # define the optimizer and step function
-    optimizer = optax.adamw(learning_rate=3e-4, weight_decay=1e-3)
+    optimizer = optax.adam(learning_rate=3e-4)
     opt_state = optimizer.init(eqx.filter(pinn, eqx.is_array))
 
     @eqx.filter_jit
@@ -189,17 +189,17 @@ if __name__ == "__main__":
         return loss, aux, model, opt_state
 
     # training loop
-    iters = 300
+    iters = 1000
     with tqdm(total=iters, desc="Training", dynamic_ncols=True, leave=True) as pbar:
         for i in range(iters):
             t, x = next(loader)
             loss, aux, pinn, opt_state = step_fn(pinn, t, x, opt_state)
             loss = loss.item()
-            ic = aux["ic_loss"].item()
-            bd = aux["boundary_loss"].item()
-            pde = aux["pde_loss"].item()
+            ic_loss = aux["ic_loss"].item()
+            bd_loss = aux["boundary_loss"].item()
+            pde_loss = aux["pde_loss"].item()
             tqdm.write(
-                f"Step: {i:4d} | IC Loss: {ic:.5f} | BC Loss: {bd:.5f} | PDE Loss: {pde:.5f} | Total Loss: {loss:.5f}"
+                f"Step: {i:4d} | IC Loss: {ic_loss:.5f} | BC Loss: {bd_loss:.5f} | PDE Loss: {pde_loss:.5f} | Total Loss: {loss:.5f}"
             )
             pbar.update(1)
 
